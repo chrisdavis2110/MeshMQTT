@@ -1,0 +1,18 @@
+[Unit]
+Description=MeshCore Message Processor Service
+After=network.target mqttwatcher.service
+Requires=mqttwatcher.service
+
+[Service]
+Type=simple
+# User and WorkingDirectory will be replaced by install script
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/meshcore/mqtt
+ExecStart=/path/to/meshcore/mqtt/venv/bin/python /path/to/meshcore/mqtt/meshmessages.py --watch --log mqtt_logs/data_log.jsonl
+Restart=always
+RestartSec=10
+StandardOutput=append:/path/to/meshcore/mqtt/mqtt_logs/meshmessages.log
+StandardError=append:/path/to/meshcore/mqtt/mqtt_logs/meshmessages_error.log
+
+[Install]
+WantedBy=multi-user.target

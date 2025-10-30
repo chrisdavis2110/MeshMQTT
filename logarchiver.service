@@ -1,0 +1,16 @@
+[Unit]
+Description=MeshCore Log Archiver Service - Archive and transfer logs weekly
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# User and WorkingDirectory will be replaced by install script
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/meshcore/mqtt
+ExecStart=/path/to/meshcore/mqtt/venv/bin/python /path/to/meshcore/mqtt/archive_logs.py --month prev --send-each --no-compress --no-keep
+StandardOutput=append:/path/to/meshcore/mqtt/mqtt_logs/archive_logs.log
+StandardError=append:/path/to/meshcore/mqtt/mqtt_logs/archive_logs_error.log
+
+[Install]
+WantedBy=multi-user.target

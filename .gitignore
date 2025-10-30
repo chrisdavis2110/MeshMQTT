@@ -1,0 +1,5 @@
+venv/
+channels/
+mqtt_logs/
+nodes.json
+config.ini
