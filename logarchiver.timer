@@ -5,6 +5,7 @@ Description=MeshCore Log Archiver Timer (monthly)
 # Run monthly on the first day of the month at 02:00
 OnCalendar=*-*-01 02:00:00
 Persistent=true
+Unit=logarchiver.service
 
 [Install]
 WantedBy=timers.target

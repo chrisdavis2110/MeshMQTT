@@ -30,7 +30,7 @@ class LogArchiver:
         # Load transfer configuration
         self.transfer_method = self.config.get("archive", "method", fallback="ssh").lower()
         self.remote_host = self.config.get("archive", "host", fallback="")
-        self.remote_path = self.config.get("archive", "path", fallback="/")
+        self.remote_path = self.config.get("archive", "logs_path", fallback="/")
         self.remote_user = self.config.get("archive", "user", fallback="")
         self.ssh_key = self.config.get("archive", "ssh_key", fallback="")
         self.smb_user = self.config.get("archive", "smb_user", fallback="")

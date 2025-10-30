@@ -3,3 +3,6 @@ channels/
 mqtt_logs/
 nodes.json
 config.ini
+__pycache__/
+*.md
+crontab.txt
