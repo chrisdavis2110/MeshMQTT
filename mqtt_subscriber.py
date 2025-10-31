@@ -32,8 +32,8 @@ class MQTTSubscriber:
         self.log_dir.mkdir(exist_ok=True)
 
         # Set up file logging
-        log_file = self.log_dir / f"mqtt_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        self.setup_logging(log_file)
+        # log_file = self.log_dir / f"mqtt_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        self.setup_logging()
 
         # Weekly log rotation
         self.current_week_start = self._get_week_start()
@@ -53,7 +53,7 @@ class MQTTSubscriber:
 
         self.logger.info(f"Initialized MQTT subscriber for broker: {self.broker_url}:{self.broker_port}")
 
-    def setup_logging(self, log_file):
+    def setup_logging(self):
         """Set up logging to both console and file"""
         # Create logger
         self.logger = logging.getLogger("mqtt_subscriber")
@@ -66,13 +66,13 @@ class MQTTSubscriber:
         console_handler.setFormatter(console_formatter)
 
         # File handler for general logs
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.INFO)
-        file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        file_handler.setFormatter(file_formatter)
+        # file_handler = logging.FileHandler(log_file)
+        # file_handler.setLevel(logging.INFO)
+        # file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        # file_handler.setFormatter(file_formatter)
 
         self.logger.addHandler(console_handler)
-        self.logger.addHandler(file_handler)
+        # self.logger.addHandler(file_handler)
 
         # Data file for structured logging (symlink to current week's file)
         self.data_log_symlink = self.log_dir / "data_log.jsonl"
