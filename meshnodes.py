@@ -25,6 +25,19 @@ class NodeDataProcessor:
         self.output_file = "nodes.json"
         self.processed_lines = 0
 
+        # Statistics for tracking
+        self.stats = {
+            'total_entries': 0,
+            'packet_topic_entries': 0,
+            'advert_packet_type': 0,
+            'with_raw_hex': 0,
+            'successfully_decoded': 0,
+            'invalid_or_wrong_type': 0,
+            'no_decoded_payload': 0,
+            'skipped_older_timestamp': 0,
+            'decode_errors': 0
+        }
+
         # Load config if available
         self._load_config()
 
@@ -76,7 +89,9 @@ class NodeDataProcessor:
         for line in lines_to_process:
             try:
                 entry = json.loads(line.strip())
+                self.stats['total_entries'] += 1
                 if entry.get('topic', '').endswith('/packets'):
+                    self.stats['packet_topic_entries'] += 1
                     self.process_packet(entry)
             except json.JSONDecodeError:
                 continue
@@ -88,11 +103,14 @@ class NodeDataProcessor:
 
             # Only process advertisement packets (type 4)
             if data.get('packet_type') == '4':
+                self.stats['advert_packet_type'] += 1
                 raw_hex = data.get('raw', '')
                 if raw_hex:
+                    self.stats['with_raw_hex'] += 1
                     self.decode_and_store(raw_hex, entry.get('timestamp'))
         except Exception as e:
             print(f"Error processing packet: {e}")
+            self.stats['decode_errors'] += 1
 
     def decode_and_store(self, hex_string, timestamp):
         """Decode a packet and store node information"""
@@ -101,10 +119,12 @@ class NodeDataProcessor:
 
             # Only process valid advertisement packets
             if not packet.is_valid or packet.payload_type != PayloadType.Advert:
+                self.stats['invalid_or_wrong_type'] += 1
                 return
 
             decoded = packet.payload.get('decoded')
             if not decoded:
+                self.stats['no_decoded_payload'] += 1
                 return
 
             # Extract node information
@@ -115,6 +135,7 @@ class NodeDataProcessor:
             if public_key in self.nodes:
                 existing_timestamp = self.nodes[public_key].get('timestamp', 0)
                 if decoded.timestamp <= existing_timestamp:
+                    self.stats['skipped_older_timestamp'] += 1
                     return
 
             # Build node entry
@@ -152,10 +173,12 @@ class NodeDataProcessor:
                     node_data['name'] = api_node['name']
 
             self.nodes[public_key] = node_data
+            self.stats['successfully_decoded'] += 1
             print(f"Decoded node: {public_key[:8]}... ({node_data.get('name', 'Unnamed')})")
 
         except Exception as e:
             print(f"Error decoding packet: {e}")
+            self.stats['decode_errors'] += 1
 
     def _get_device_role(self, role):
         """Convert device role enum to numeric value"""
@@ -215,10 +238,38 @@ class NodeDataProcessor:
             json.dump(data, f, indent=2)
 
         print(f"\nSaved {len(sorted_nodes)} nodes to {output_file}")
+        self._print_stats()
+
+    def _print_stats(self):
+        """Print processing statistics"""
+        print("\n=== Processing Statistics ===")
+        print(f"Total log entries processed: {self.stats['total_entries']}")
+        print(f"Entries with /packets topic: {self.stats['packet_topic_entries']}")
+        print(f"Advert packets (type 4): {self.stats['advert_packet_type']}")
+        print(f"With raw hex data: {self.stats['with_raw_hex']}")
+        print(f"Successfully decoded: {self.stats['successfully_decoded']}")
+        print(f"Invalid/wrong payload type: {self.stats['invalid_or_wrong_type']}")
+        print(f"No decoded payload: {self.stats['no_decoded_payload']}")
+        print(f"Skipped (older timestamp): {self.stats['skipped_older_timestamp']}")
+        print(f"Decode errors: {self.stats['decode_errors']}")
+        print("=" * 30)
 
     def run(self, only_new=False):
         """Process log file and create nodes.json"""
         print(f"Processing {self.log_file}...")
+        # Reset stats for this run
+        if not only_new:
+            self.stats = {
+                'total_entries': 0,
+                'packet_topic_entries': 0,
+                'advert_packet_type': 0,
+                'with_raw_hex': 0,
+                'successfully_decoded': 0,
+                'invalid_or_wrong_type': 0,
+                'no_decoded_payload': 0,
+                'skipped_older_timestamp': 0,
+                'decode_errors': 0
+            }
         # Fetch API data first (only on initial run)
         if not only_new and not self.api_nodes:
             self.fetch_api_data()
