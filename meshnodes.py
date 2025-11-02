@@ -4,7 +4,6 @@ Node Data Processor - Decode MQTT packet data and create nodes.json
 """
 
 import json
-import sys
 import requests
 import configparser
 from datetime import datetime
@@ -48,7 +47,7 @@ class NodeDataProcessor:
             return
 
         try:
-            print(f"Fetching node data from API...")
+            print("Fetching node data from API...")
             response = requests.get(self.api_url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
@@ -119,25 +118,28 @@ class NodeDataProcessor:
                     return
 
             # Build node entry
-            node_data = {
-                'public_key': public_key,
-                'last_seen': datetime.fromtimestamp(decoded.timestamp).isoformat() + 'Z',
-                'timestamp': decoded.timestamp,
-                'device_role': self._get_device_role(app_data.get('device_role')),
-                'name': app_data.get('name', ''),
-                'location': app_data.get('location', {'latitude': 0, 'longitude': 0})
-            }
+            last_seen_iso = datetime.fromtimestamp(decoded.timestamp).isoformat() + 'Z'
 
-            # Set or preserve first_seen
+            # Determine first_seen value
             if public_key in self.nodes:
                 existing = self.nodes[public_key]
                 # Prefer existing first_seen; fallback to previous last_seen or timestamp
                 first_seen_value = existing.get('first_seen') or existing.get('last_seen')
                 if not first_seen_value and existing.get('timestamp'):
                     first_seen_value = datetime.fromtimestamp(existing['timestamp']).isoformat() + 'Z'
-                node_data['first_seen'] = first_seen_value or node_data['last_seen']
+                first_seen_iso = first_seen_value or last_seen_iso
             else:
-                node_data['first_seen'] = node_data['last_seen']
+                first_seen_iso = last_seen_iso
+
+            node_data = {
+                'public_key': public_key,
+                'first_seen': first_seen_iso,
+                'last_seen': last_seen_iso,
+                'timestamp': decoded.timestamp,
+                'device_role': self._get_device_role(app_data.get('device_role')),
+                'name': app_data.get('name', ''),
+                'location': app_data.get('location', {'latitude': 0, 'longitude': 0})
+            }
 
             # Merge with API data if available
             if public_key in self.api_nodes:
