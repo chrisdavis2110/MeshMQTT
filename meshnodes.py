@@ -82,6 +82,14 @@ class NodeDataProcessor:
         with open(self.log_file, 'r') as f:
             lines = f.readlines()
 
+        current_file_size = len(lines)
+
+        # If file has shrunk (weekly rotation), reset the counter
+        # This happens when a new week's log file is smaller than the previous week's
+        if only_new and current_file_size < self.processed_lines:
+            print(f"Detected log file rotation (file size decreased from {self.processed_lines} to {current_file_size} lines). Resetting line counter.")
+            self.processed_lines = 0
+
         # Only process new lines if only_new is True
         lines_to_process = lines[self.processed_lines:] if only_new else lines
         self.processed_lines = len(lines)
@@ -130,6 +138,12 @@ class NodeDataProcessor:
             # Extract node information
             public_key = decoded.public_key
             app_data = decoded.app_data
+
+            # Validate public_key
+            if not public_key:
+                self.stats['decode_errors'] += 1
+                print("Warning: Packet decoded but has no public_key, skipping")
+                return
 
             # Skip if we already have a newer entry for this node
             if public_key in self.nodes:
@@ -225,8 +239,14 @@ class NodeDataProcessor:
         if output_file is None:
             output_file = self.output_file
 
+        # Filter out any nodes without public_key (shouldn't happen, but defensive)
+        valid_nodes = [node for node in self.nodes.values() if node.get('public_key')]
+
+        if len(valid_nodes) < len(list(self.nodes.values())):
+            print(f"Warning: Filtered out {len(list(self.nodes.values())) - len(valid_nodes)} nodes without public_key")
+
         # Sort nodes by public_key
-        sorted_nodes = sorted(self.nodes.values(), key=lambda x: x['public_key'])
+        sorted_nodes = sorted(valid_nodes, key=lambda x: x['public_key'])
 
         # Create final data structure
         data = {
