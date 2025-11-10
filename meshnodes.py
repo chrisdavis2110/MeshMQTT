@@ -120,7 +120,7 @@ class NodeDataProcessor:
             print(f"Error processing packet: {e}")
             self.stats['decode_errors'] += 1
 
-    def decode_and_store(self, hex_string, timestamp):
+    def decode_and_store(self, hex_string, log_timestamp):
         """Decode a packet and store node information"""
         try:
             packet = MeshCoreDecoder.decode(hex_string)
@@ -137,7 +137,7 @@ class NodeDataProcessor:
 
             # Extract node information
             public_key = decoded.public_key
-            app_data = decoded.app_data
+            app_data = decoded.app_data if hasattr(decoded, 'app_data') and decoded.app_data else {}
 
             # Validate public_key
             if not public_key:
@@ -145,15 +145,37 @@ class NodeDataProcessor:
                 print("Warning: Packet decoded but has no public_key, skipping")
                 return
 
+            # Determine the timestamp to use
+            # Prefer log entry timestamp (when we received it) over device timestamp
+            # Convert log_timestamp string to timestamp if needed
+            if isinstance(log_timestamp, str):
+                try:
+                    # Parse ISO format timestamp
+                    if log_timestamp.endswith('Z'):
+                        log_timestamp = log_timestamp[:-1]
+                    log_ts = int(datetime.fromisoformat(log_timestamp).timestamp())
+                except (ValueError, AttributeError):
+                    # Fallback to decoded timestamp if log timestamp can't be parsed
+                    log_ts = decoded.timestamp
+            else:
+                log_ts = log_timestamp if log_timestamp else decoded.timestamp
+
+            # Use the maximum of log timestamp and decoded timestamp to handle clock issues
+            # But prefer log timestamp as it's when we actually received the packet
+            effective_timestamp = max(log_ts, decoded.timestamp) if log_ts > 0 else decoded.timestamp
+
             # Skip if we already have a newer entry for this node
             if public_key in self.nodes:
                 existing_timestamp = self.nodes[public_key].get('timestamp', 0)
-                if decoded.timestamp <= existing_timestamp:
+                if effective_timestamp <= existing_timestamp:
                     self.stats['skipped_older_timestamp'] += 1
                     return
+                # Debug: Log when we're updating an existing node with newer timestamp
+                if effective_timestamp > existing_timestamp:
+                    print(f"Updating node {public_key[:8]}...: {datetime.fromtimestamp(existing_timestamp).isoformat()} -> {datetime.fromtimestamp(effective_timestamp).isoformat()}")
 
             # Build node entry
-            last_seen_iso = datetime.fromtimestamp(decoded.timestamp).isoformat() + 'Z'
+            last_seen_iso = datetime.fromtimestamp(effective_timestamp).isoformat() + 'Z'
 
             # Determine first_seen value
             if public_key in self.nodes:
@@ -166,15 +188,27 @@ class NodeDataProcessor:
             else:
                 first_seen_iso = last_seen_iso
 
+            # # Extract battery voltage (check both decoded object and app_data)
+            # battery_voltage = None
+            # if hasattr(decoded, 'battery_voltage'):
+            #     battery_voltage = decoded.battery_voltage
+            # elif app_data and isinstance(app_data, dict):
+            #     battery_voltage = app_data.get('battery_voltage')
+
             node_data = {
                 'public_key': public_key,
                 'first_seen': first_seen_iso,
                 'last_seen': last_seen_iso,
-                'timestamp': decoded.timestamp,
-                'device_role': self._get_device_role(app_data.get('device_role')),
-                'name': app_data.get('name', ''),
-                'location': app_data.get('location', {'latitude': 0, 'longitude': 0})
+                'timestamp': effective_timestamp,
+                'device_role': self._get_device_role(app_data.get('device_role') if app_data else None),
+                'name': app_data.get('name', '') if app_data else '',
+                'location': app_data.get('location', {'latitude': 0, 'longitude': 0}) if app_data else {'latitude': 0, 'longitude': 0},
+                'battery_voltage': app_data.get('battery_voltage', 0) if app_data else 0
             }
+
+            # # Add battery_voltage if available
+            # if battery_voltage is not None:
+            #     node_data['battery_voltage'] = battery_voltage
 
             # Merge with API data if available
             if public_key in self.api_nodes:
@@ -188,7 +222,8 @@ class NodeDataProcessor:
 
             self.nodes[public_key] = node_data
             self.stats['successfully_decoded'] += 1
-            print(f"Decoded node: {public_key[:8]}... ({node_data.get('name', 'Unnamed')})")
+            device_role_name = "Repeater" if node_data.get('device_role') == 2 else f"Role {node_data.get('device_role')}"
+            print(f"Decoded node: {public_key[:8]}... ({node_data.get('name', 'Unnamed')}) [{device_role_name}]")
 
         except Exception as e:
             print(f"Error decoding packet: {e}")
