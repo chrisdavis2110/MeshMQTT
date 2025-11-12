@@ -7,3 +7,9 @@ __pycache__/
 *.md
 crontab.txt
 .DS_Store
+*.sh
+*.plist
+com.*
+prodNodes.json
+diagnose_nodes.py
+find_missing_nodes.py
