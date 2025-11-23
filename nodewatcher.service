@@ -6,9 +6,10 @@ Requires=mqttwatcher.service
 [Service]
 Type=simple
 User=YOUR_USERNAME
-WorkingDirectory=/path/to/meshcore/mqtt
-ExecStart=/path/to/meshcore/mqtt/venv/bin/python /path/to/meshcore/mqtt/meshnodes.py --watch --log mqtt_logs/data_log.jsonl --output nodes.json
+WorkingDirectory=/path/to/MeshMQTT
+ExecStart=/path/to/MeshMQTT/venv/bin/python /path/to/MeshMQTT/meshnodes.py --watch --log mqtt_logs/data_log.jsonl --output nodes.json
 Restart=always
 RestartSec=10
+
 [Install]
 WantedBy=multi-user.target

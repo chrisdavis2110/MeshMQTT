@@ -1,0 +1,14 @@
+[Unit]
+Description=MeshCore metadata archiver (nodes.json + channels)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/MeshMQTT
+ExecStart=/path/to/MeshMQTT/venv/bin/python /path/to/MeshMQTT/archive_metadata.py --no-compress --no-keep --delete-original-channels
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

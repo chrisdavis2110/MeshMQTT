@@ -1,0 +1,12 @@
+[Unit]
+Description=MeshCore Log Cleanup Service - Delete old logs based on retention period
+After=network.target
+
+[Service]
+Type=oneshot
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/MeshMQTT
+ExecStart=/path/to/MeshMQTT/venv/bin/python /path/to/MeshMQTT/cleanup_logs.py
+
+[Install]
+WantedBy=multi-user.target

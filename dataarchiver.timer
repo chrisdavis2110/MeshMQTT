@@ -2,7 +2,7 @@
 Description=Run MeshCore metadata archiver daily
 
 [Timer]
-OnCalendar=*-*-01 02:00:00
+OnCalendar=*-*-01 02:30:00
 Persistent=true
 Unit=mqttdataarchiver.service
 

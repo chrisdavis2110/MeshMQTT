@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=YOUR_USERNAME
-WorkingDirectory=/path/to/meshcore/mqtt
-ExecStart=/path/to/meshcore/mqtt/venv/bin/python /path/to/meshcore/mqtt/mqtt_subscriber.py
+WorkingDirectory=/path/to/MeshMQTT
+ExecStart=/path/to/MeshMQTT/venv/bin/python /path/to/MeshMQTT/mqtt_subscriber.py
 Restart=always
 RestartSec=10
 
