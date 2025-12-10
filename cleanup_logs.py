@@ -9,7 +9,7 @@ import configparser
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import re
 
 
@@ -33,60 +33,47 @@ class LogCleaner:
 
     def setup_logging(self):
         """Set up logging"""
-        # log_file = self.log_dir / "cleanup_logs.log"
+        log_file = self.log_dir / "cleanup_logs.log"
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
-            # handlers=[
-            #     logging.FileHandler(log_file),
-            #     logging.StreamHandler()
-            # ]
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler()
+            ]
         )
         self.logger = logging.getLogger("log_cleaner")
 
-    def parse_week_from_filename(self, filename: str) -> tuple:
-        """Parse year and week number from filename like 'data_log_2025-W44.jsonl'
+    def parse_date_from_filename(self, filename: str) -> Optional[datetime]:
+        """Parse date from filename like 'data_log_2025-01-15.jsonl'
 
         Returns:
-            tuple: (year, week) or (None, None) if parsing fails
+            datetime or None if parsing fails
         """
-        # Pattern: data_log_YYYY-W##.jsonl
-        pattern = r'data_log_(\d{4})-W(\d{2})\.jsonl'
+        # Pattern: data_log_YYYY-MM-DD.jsonl
+        pattern = r'data_log_(\d{4})-(\d{2})-(\d{2})\.jsonl'
         match = re.match(pattern, filename)
         if match:
-            year = int(match.group(1))
-            week = int(match.group(2))
-            return (year, week)
-        return (None, None)
-
-    def get_week_date(self, year: int, week: int) -> datetime:
-        """Get the date of the Monday of the given ISO week"""
-        # ISO week: week 1 is the first week with a Thursday
-        # Use January 4th as reference (always in week 1)
-        jan4 = datetime(year, 1, 4)
-        jan4_weekday = jan4.weekday()  # 0=Monday, 3=Thursday
-        # Calculate the Monday of week 1
-        # If Jan 4 is Thursday (3), Monday is 3 days before
-        # If Jan 4 is Friday (4), Monday is 4 days before, etc.
-        week1_monday = jan4 - timedelta(days=jan4_weekday)
-        # Calculate the Monday of the target week
-        target_monday = week1_monday + timedelta(weeks=week - 1)
-        return target_monday
+            try:
+                year = int(match.group(1))
+                month = int(match.group(2))
+                day = int(match.group(3))
+                return datetime(year, month, day)
+            except ValueError:
+                return None
+        return None
 
     def get_file_age_days(self, log_file: Path) -> int:
         """Calculate the age of a log file in days based on its filename
 
-        For weekly files, uses the week number to determine age.
+        For daily files, uses the date in the filename to determine age.
         For other files, uses file modification time.
         """
-        # Try to parse week from filename
-        year, week = self.parse_week_from_filename(log_file.name)
+        # Try to parse date from filename
+        file_date = self.parse_date_from_filename(log_file.name)
 
-        if year and week:
-            # Calculate age based on week
-            file_date = self.get_week_date(year, week)
-            # Use the end of the week (Sunday) as the file date
-            file_date = file_date + timedelta(days=6)
+        if file_date:
+            # Calculate age based on file date
             now = datetime.now()
             age = (now - file_date).days
             return age
@@ -105,13 +92,18 @@ class LogCleaner:
         """Get all log files older than retention_days"""
         old_files = []
 
-        # Find all weekly log files
-        weekly_files = list(self.log_dir.glob("data_log_*-W*.jsonl"))
+        # Find all daily log files (pattern: data_log_YYYY-MM-DD.jsonl)
+        all_files = list(self.log_dir.glob("data_log_*-*-*.jsonl"))
+        daily_files = []
+        for f in all_files:
+            # Filter to only match YYYY-MM-DD format (exclude symlinks and other files)
+            if re.match(r'data_log_\d{4}-\d{2}-\d{2}\.jsonl$', f.name):
+                daily_files.append(f)
 
         # Also check for the current symlink (data_log.jsonl) - we'll skip it
         current_symlink = self.log_dir / "data_log.jsonl"
 
-        for log_file in weekly_files:
+        for log_file in daily_files:
             # Skip the current symlink
             if log_file == current_symlink or log_file.is_symlink():
                 continue

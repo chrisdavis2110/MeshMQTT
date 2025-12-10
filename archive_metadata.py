@@ -61,7 +61,7 @@ class MetadataArchiver:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
+                # logging.FileHandler(log_file),
                 logging.StreamHandler()
             ]
         )

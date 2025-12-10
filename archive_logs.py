@@ -15,6 +15,7 @@ from typing import Optional, List
 import gzip
 import tempfile
 import os
+import re
 
 class LogArchiver:
     def __init__(self, config_file="config.ini"):
@@ -44,31 +45,44 @@ class LogArchiver:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
+                # logging.FileHandler(log_file),
                 logging.StreamHandler()
             ]
         )
         self.logger = logging.getLogger("log_archiver")
 
     def get_yearly_log_files(self, year: Optional[int] = None) -> List[Path]:
-        """Get all weekly log files for a given year"""
+        """Get all daily log files for a given year"""
         if year is None:
             year = datetime.now().year
 
-        # Pattern: data_log_YYYY-W##.jsonl
+        # Pattern: data_log_YYYY-MM-DD.jsonl
         log_files = sorted(
-            self.log_dir.glob(f"data_log_{year}-W*.jsonl")
+            self.log_dir.glob(f"data_log_{year}-*.jsonl")
         )
+        # Filter to only match YYYY-MM-DD format (exclude symlinks and other files)
+        filtered_files = []
+        for f in log_files:
+            # Check if filename matches YYYY-MM-DD pattern
+            if re.match(rf'data_log_{year}-\d{{2}}-\d{{2}}\.jsonl$', f.name):
+                filtered_files.append(f)
 
-        self.logger.info(f"Found {len(log_files)} log files for year {year}")
-        return log_files
+        self.logger.info(f"Found {len(filtered_files)} log files for year {year}")
+        return filtered_files
 
-    def get_all_weekly_files(self) -> List[Path]:
-        """Get all weekly log files regardless of year (for monthly filtering)."""
-        return sorted(self.log_dir.glob("data_log_*W*.jsonl"))
+    def get_all_daily_files(self) -> List[Path]:
+        """Get all daily log files regardless of year (for monthly filtering)."""
+        all_files = sorted(self.log_dir.glob("data_log_*-*-*.jsonl"))
+        # Filter to only match YYYY-MM-DD format (exclude symlinks and other files)
+        filtered_files = []
+        for f in all_files:
+            # Check if filename matches YYYY-MM-DD pattern
+            if re.match(r'data_log_\d{4}-\d{2}-\d{2}\.jsonl$', f.name):
+                filtered_files.append(f)
+        return filtered_files
 
     def file_has_entries_in_month(self, log_file: Path, year: int, month: int) -> bool:
-        """Return True if the given weekly file has any entries whose timestamp is in (year, month)."""
+        """Return True if the given daily file has any entries whose timestamp is in (year, month)."""
         try:
             with open(log_file, 'r') as infile:
                 for line in infile:
@@ -88,14 +102,14 @@ class LogArchiver:
             return False
         return False
 
-    def find_weekly_files_for_month(self, year: int, month: int) -> List[Path]:
-        """Find weekly files that contain at least one entry for the specified (year, month)."""
-        candidates = self.get_all_weekly_files()
+    def find_daily_files_for_month(self, year: int, month: int) -> List[Path]:
+        """Find daily files that contain at least one entry for the specified (year, month)."""
+        candidates = self.get_all_daily_files()
         result: List[Path] = []
         for f in candidates:
             if self.file_has_entries_in_month(f, year, month):
                 result.append(f)
-        self.logger.info(f"Selected {len(result)} weekly files for {year}-{month:02d}")
+        self.logger.info(f"Selected {len(result)} daily files for {year}-{month:02d}")
         return result
 
     def compile_logs(self, log_files: List[Path], output_file: Path, compress: bool = False) -> Path:
@@ -138,12 +152,12 @@ class LogArchiver:
             open_func = open
             mode = 'w'
 
-        # Consider all weekly files (weeks can cross month boundaries)
-        weekly_files = self.get_all_weekly_files()
+        # Consider all daily files
+        daily_files = self.get_all_daily_files()
 
         total_entries = 0
         with open_func(output_file, mode) as outfile:
-            for log_file in weekly_files:
+            for log_file in daily_files:
                 try:
                     with open(log_file, 'r') as infile:
                         for line in infile:
@@ -349,33 +363,33 @@ class LogArchiver:
             # Monthly mode
             self.logger.info(f"Starting archive process for {target_year}-{target_month:02d}")
             if send_each:
-                # Send each weekly file that has entries in this month (no compression)
-                weekly_files = self.find_weekly_files_for_month(target_year, target_month)
-                if not weekly_files:
-                    self.logger.warning("No weekly files found for this month")
+                # Send each daily file that has entries in this month (no compression)
+                daily_files = self.find_daily_files_for_month(target_year, target_month)
+                if not daily_files:
+                    self.logger.warning("No daily files found for this month")
                     return False
                 all_ok = True
-                for wf in weekly_files:
+                for df in daily_files:
                     ok = False
                     if self.transfer_method == "ssh":
-                        ok = self.transfer_via_ssh(wf)
+                        ok = self.transfer_via_ssh(df)
                     elif self.transfer_method == "rsync":
-                        ok = self.transfer_via_rsync(wf)
+                        ok = self.transfer_via_rsync(df)
                     elif self.transfer_method == "smb":
-                        ok = self.transfer_via_smb(wf)
+                        ok = self.transfer_via_smb(df)
                     else:
                         self.logger.error(f"Unknown transfer method: {self.transfer_method}")
                         return False
                     if not ok:
                         all_ok = False
                     else:
-                        # Delete local weekly file after successful transfer if not keeping
+                        # Delete local daily file after successful transfer if not keeping
                         if not keep_local:
                             try:
-                                wf.unlink()
-                                self.logger.info(f"Removed local weekly log after transfer: {wf.name}")
+                                df.unlink()
+                                self.logger.info(f"Removed local daily log after transfer: {df.name}")
                             except Exception as e:
-                                self.logger.error(f"Failed to remove local weekly log {wf.name}: {e}")
+                                self.logger.error(f"Failed to remove local daily log {df.name}: {e}")
                 return all_ok
             else:
                 # Compile into a single monthly archive
@@ -419,7 +433,7 @@ def main():
     parser.add_argument('--month', help='Month to archive: 1-12 or prev (previous month). If set, archives that month.')
     parser.add_argument('--no-compress', action='store_true', help='Do not compress archive')
     parser.add_argument('--no-keep', action='store_true', help='Delete local archive after transfer')
-    parser.add_argument('--send-each', action='store_true', help='Send each weekly file individually (no compilation)')
+    parser.add_argument('--send-each', action='store_true', help='Send each daily file individually (no compilation)')
     parser.add_argument('--config', default='config.ini', help='Config file path')
 
     args = parser.parse_args()
