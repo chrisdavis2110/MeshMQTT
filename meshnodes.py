@@ -6,7 +6,6 @@ Node Data Processor - Decode MQTT packet data and create nodes.json
 import json
 import requests
 import configparser
-import asyncio
 from datetime import datetime
 from pathlib import Path
 
@@ -125,41 +124,10 @@ class NodeDataProcessor:
             print(f"Error processing packet: {e}")
             self.stats['decode_errors'] += 1
 
-    async def _verify_packet(self, hex_string):
-        """Verify packet signature using async decode_with_verification"""
-        try:
-            packet = await MeshCoreDecoder.decode_with_verification(hex_string)
-            if packet.payload.get('decoded'):
-                advert = packet.payload['decoded']
-                if hasattr(advert, 'signature_valid'):
-                    return advert.signature_valid
-            return False
-        except Exception as e:
-            print(f"Error verifying packet signature: {e}")
-            return False
-
-    def _run_verify_packet(self, hex_string):
-        """Run packet verification synchronously"""
-        try:
-            # Since this is called from synchronous code, asyncio.run() should work
-            return asyncio.run(self._verify_packet(hex_string))
-        except RuntimeError as e:
-            # If there's already an event loop running, we need a different approach
-            # This shouldn't happen in normal usage, but handle it gracefully
-            print(f"Warning: Could not verify packet signature due to event loop issue: {e}")
-            return False
-
     def decode_and_store(self, hex_string, log_timestamp):
         """Decode a packet and store node information"""
         try:
-            # First verify the packet signature
-            signature_valid = self._run_verify_packet(hex_string)
-            if not signature_valid:
-                print(f"Warning: Packet signature verification failed, skipping node")
-                self.stats['signature_verification_failed'] += 1
-                return
-
-            packet = MeshCoreDecoder.decode(hex_string)
+            packet = MeshCoreDecoder.decode_with_verification(hex_string)
 
             # Only process valid advertisement packets
             if not packet.is_valid or packet.payload_type != PayloadType.Advert:
@@ -169,6 +137,16 @@ class NodeDataProcessor:
             decoded = packet.payload.get('decoded')
             if not decoded:
                 self.stats['no_decoded_payload'] += 1
+                return
+
+            # Verify packet signature if available
+            signature_valid = True  # Default to True if signature validation not available
+            if hasattr(decoded, 'signature_valid'):
+                signature_valid = decoded.signature_valid
+
+            if not signature_valid:
+                print(f"Warning: Packet signature verification failed, skipping node")
+                self.stats['signature_verification_failed'] += 1
                 return
 
             # Extract node information
@@ -310,16 +288,11 @@ class NodeDataProcessor:
         if output_file is None:
             output_file = self.output_file
 
-        # Filter to only include repeaters (device_role == 2) with valid public_key
+        # Include all nodes with valid public_key
         valid_nodes = [
             node for node in self.nodes.values()
-            if node.get('public_key') and node.get('device_role') == 2
+            if node.get('public_key')
         ]
-
-        total_nodes = len(list(self.nodes.values()))
-        if len(valid_nodes) < total_nodes:
-            filtered_count = total_nodes - len(valid_nodes)
-            print(f"Filtered out {filtered_count} nodes (non-repeaters or missing public_key)")
 
         # Sort nodes by public_key
         sorted_nodes = sorted(valid_nodes, key=lambda x: x['public_key'])
