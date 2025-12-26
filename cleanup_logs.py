@@ -45,19 +45,19 @@ class LogCleaner:
         self.logger = logging.getLogger("log_cleaner")
 
     def parse_date_from_filename(self, filename: str) -> Optional[datetime]:
-        """Parse date from filename like 'data_log_2025-01-15.jsonl'
+        """Parse date from filename like 'data_log_2025-01-15.jsonl' or 'data_log_<region>_2025-01-15.jsonl'
 
         Returns:
             datetime or None if parsing fails
         """
-        # Pattern: data_log_YYYY-MM-DD.jsonl
-        pattern = r'data_log_(\d{4})-(\d{2})-(\d{2})\.jsonl'
+        # Pattern: data_log_YYYY-MM-DD.jsonl or data_log_<region>_YYYY-MM-DD.jsonl
+        pattern = r'data_log_([a-z]+_)?(\d{4})-(\d{2})-(\d{2})\.jsonl'
         match = re.match(pattern, filename)
         if match:
             try:
-                year = int(match.group(1))
-                month = int(match.group(2))
-                day = int(match.group(3))
+                year = int(match.group(2))
+                month = int(match.group(3))
+                day = int(match.group(4))
                 return datetime(year, month, day)
             except ValueError:
                 return None
@@ -92,12 +92,12 @@ class LogCleaner:
         """Get all log files older than retention_days"""
         old_files = []
 
-        # Find all daily log files (pattern: data_log_YYYY-MM-DD.jsonl)
+        # Find all daily log files (pattern: data_log_YYYY-MM-DD.jsonl or data_log_<region>_YYYY-MM-DD.jsonl)
         all_files = list(self.log_dir.glob("data_log_*-*-*.jsonl"))
         daily_files = []
         for f in all_files:
-            # Filter to only match YYYY-MM-DD format (exclude symlinks and other files)
-            if re.match(r'data_log_\d{4}-\d{2}-\d{2}\.jsonl$', f.name):
+            # Filter to only match YYYY-MM-DD format (with optional region prefix, exclude symlinks and other files)
+            if re.match(r'data_log_([a-z]+_)?\d{4}-\d{2}-\d{2}\.jsonl$', f.name):
                 daily_files.append(f)
 
         # Also check for the current symlink (data_log.jsonl) - we'll skip it
