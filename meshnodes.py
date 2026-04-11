@@ -6,7 +6,7 @@ Node Data Processor - Decode MQTT packet data and create nodes.json
 import json
 import requests
 import configparser
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -52,6 +52,7 @@ class NodeDataProcessor:
         }
 
         # Load config if available
+        self.purge_not_seen_days = 0
         self._load_config()
 
         # Load existing nodes (to preserve first_seen across runs)
@@ -66,6 +67,11 @@ class NodeDataProcessor:
             config.read('config.ini')
             if not self.api_url and config.has_option('meshcore', 'mqtt_api'):
                 self.api_url = config.get('meshcore', 'mqtt_api')
+            if config.has_option('nodes', 'purge_not_seen_days'):
+                try:
+                    self.purge_not_seen_days = max(0, int(config.get('nodes', 'purge_not_seen_days')))
+                except ValueError:
+                    print("Invalid nodes.purge_not_seen_days in config.ini; ignoring")
             self.config = config
         except Exception as e:
             print(f"Could not load config: {e}")
@@ -167,6 +173,12 @@ class NodeDataProcessor:
             public_key = decoded.public_key
             app_data = decoded.app_data if hasattr(decoded, 'app_data') and decoded.app_data else {}
 
+            hash_mode = getattr(decoded, 'hash_mode', None)
+            if hash_mode is None and isinstance(app_data, dict):
+                hash_mode = app_data.get('hash_mode')
+            if hash_mode is not None and hasattr(hash_mode, 'value'):
+                hash_mode = hash_mode.value
+
             # Validate public_key
             if not public_key:
                 self.stats['decode_errors'] += 1
@@ -231,7 +243,8 @@ class NodeDataProcessor:
                 'device_role': self._get_device_role(app_data.get('device_role') if app_data else None),
                 'name': app_data.get('name', '') if app_data else '',
                 'location': app_data.get('location', {'latitude': 0, 'longitude': 0}) if app_data else {'latitude': 0, 'longitude': 0},
-                'battery_voltage': app_data.get('battery_voltage', 0) if app_data else 0
+                # 'battery_voltage': app_data.get('battery_voltage', 0) if app_data else 0,
+                'hash_mode': hash_mode
             }
 
             # # Add battery_voltage if available
@@ -271,6 +284,47 @@ class NodeDataProcessor:
         else:
             return 1
 
+    @staticmethod
+    def _node_last_seen_unix(node: dict) -> Optional[int]:
+        """Best-effort unix timestamp for when the node was last seen."""
+        ts = node.get('timestamp')
+        if isinstance(ts, (int, float)) and ts > 0:
+            return int(ts)
+        last = node.get('last_seen')
+        if isinstance(last, str) and last.strip():
+            try:
+                s = last.strip().removesuffix('Z')
+                dt = datetime.fromisoformat(s)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return int(dt.timestamp())
+            except (ValueError, OSError, TypeError):
+                pass
+        return None
+
+    def _purge_stale_nodes(self) -> int:
+        """Drop nodes whose last_seen is older than purge_not_seen_days (0 = disabled)."""
+        days = self.purge_not_seen_days
+        if not days:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_ts = int(cutoff.timestamp())
+        removed = 0
+        for pk in list(self.nodes.keys()):
+            node = self.nodes[pk]
+            last_ts = self._node_last_seen_unix(node)
+            if last_ts is None:
+                continue
+            if last_ts < cutoff_ts:
+                del self.nodes[pk]
+                removed += 1
+        if removed:
+            print(
+                f"Purged {removed} node(s) not seen in the last {days} day(s) "
+                f"(cutoff {cutoff.isoformat()})"
+            )
+        return removed
+
     def _load_existing_nodes(self):
         """Load nodes from an existing output file to preserve fields like first_seen"""
         try:
@@ -301,6 +355,8 @@ class NodeDataProcessor:
         """Save nodes to JSON file"""
         if output_file is None:
             output_file = self.output_file
+
+        self._purge_stale_nodes()
 
         # Include all nodes with valid public_key
         valid_nodes = [
