@@ -6,20 +6,32 @@ Node Data Processor - Decode MQTT packet data and create nodes.json
 import json
 import requests
 import configparser
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 from meshcoredecoder import MeshCoreDecoder
+
+from mesh_log_cli import add_standard_log_args, entry_in_date_range, parse_cli_date_range
 from meshcoredecoder.types.enums import PayloadType, DeviceRole
 
 
 class NodeDataProcessor:
-    def __init__(self, log_file=None, api_url=None, output_file=None):
+    def __init__(
+        self,
+        log_file=None,
+        api_url=None,
+        output_file=None,
+        date_start: Optional[date] = None,
+        date_end: Optional[date] = None,
+    ):
         """Initialize the node data processor"""
         self.nodes = {}
         if log_file is None:
             log_file = "mqtt_logs/data_log.jsonl"
         self.log_file = Path(log_file)
+        self.date_start = date_start
+        self.date_end = date_end
         self.api_url = api_url
         self.api_nodes = {}
         self.output_file = output_file if output_file else "nodes.json"
@@ -111,6 +123,8 @@ class NodeDataProcessor:
     def process_packet(self, entry):
         """Process a single packet entry"""
         try:
+            if not entry_in_date_range(entry.get("timestamp"), self.date_start, self.date_end):
+                return
             data = entry.get('data', {})
 
             # Only process advertisement packets (type 4)
@@ -367,18 +381,28 @@ def get_region_log_names():
         return []
 
 
-def get_region_log_file(log_name):
+def get_region_log_file(log_name, log_dir=None):
     """Get the log file path for a given log name"""
-    log_dir = Path("mqtt_logs")
+    base = Path(log_dir) if log_dir else Path("mqtt_logs")
     if log_name == "data_log":
-        return log_dir / "data_log.jsonl"
-    else:
-        return log_dir / f"data_log_{log_name}.jsonl"
+        return base / "data_log.jsonl"
+    return base / f"data_log_{log_name}.jsonl"
 
 
-def process_all_regions(api_url=None, watch=False, create_combined=True):
+def process_all_regions(
+    api_url=None,
+    watch=False,
+    create_combined=True,
+    log_dir="mqtt_logs",
+    region_filter=None,
+    date_start=None,
+    date_end=None,
+):
     """Process all region log files and create separate nodes files"""
-    log_names = get_region_log_names()
+    if region_filter:
+        log_names = [region_filter.strip().lower()]
+    else:
+        log_names = get_region_log_names()
 
     if not log_names:
         print("No region logs found in config.ini. Processing default data_log.jsonl")
@@ -391,7 +415,7 @@ def process_all_regions(api_url=None, watch=False, create_combined=True):
 
     # Process each region
     for log_name in log_names:
-        log_file = get_region_log_file(log_name)
+        log_file = get_region_log_file(log_name, log_dir)
         output_file = f"nodes_{log_name}.json" if log_name != "data_log" else "nodes.json"
 
         print(f"\n{'='*60}")
@@ -400,7 +424,13 @@ def process_all_regions(api_url=None, watch=False, create_combined=True):
         print(f"  Output file: {output_file}")
         print(f"{'='*60}")
 
-        processor = NodeDataProcessor(str(log_file), api_url=api_url, output_file=output_file)
+        processor = NodeDataProcessor(
+            str(log_file),
+            api_url=api_url,
+            output_file=output_file,
+            date_start=date_start,
+            date_end=date_end,
+        )
 
         if watch:
             processors[log_name] = processor
@@ -423,7 +453,7 @@ def process_all_regions(api_url=None, watch=False, create_combined=True):
         print(f"\n{'='*60}")
         print("Creating combined nodes.json...")
         print(f"{'='*60}")
-        combined_processor = NodeDataProcessor()
+        combined_processor = NodeDataProcessor(date_start=date_start, date_end=date_end)
         combined_processor.nodes = all_nodes
         combined_processor.output_file = "nodes.json"
         combined_processor.save_nodes_json()
@@ -444,19 +474,41 @@ def process_all_regions(api_url=None, watch=False, create_combined=True):
                 break
 
 
+def _mqtt_api_url_from_config():
+    config = configparser.ConfigParser()
+    api_url = None
+    try:
+        config.read('config.ini')
+        if config.has_option('meshcore', 'mqtt_api'):
+            api_url = config.get('meshcore', 'mqtt_api')
+    except Exception:
+        pass
+    return api_url
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='Decode MQTT packet data and create nodes.json')
-    parser.add_argument('--log', default=None, help='Input log file (if not specified, processes all region logs)')
+    add_standard_log_args(parser)
+    parser.add_argument('--log', default=None, help='Input log file (overrides --log-dir / --region / --log-files)')
     parser.add_argument('--output', default='nodes.json', help='Output JSON file (only used with --log)')
     parser.add_argument('--watch', action='store_true', help='Watch log file(s) for changes and update nodes.json continuously')
     parser.add_argument('--no-combined', action='store_true', help='Skip creating combined nodes.json when processing all regions')
 
     args = parser.parse_args()
 
+    date_start, date_end, dr_err = parse_cli_date_range(args)
+    if dr_err:
+        print(dr_err)
+        raise SystemExit(1)
+
     # If --log is specified, use single-file mode (backward compatibility)
     if args.log:
-        processor = NodeDataProcessor(args.log)
+        processor = NodeDataProcessor(
+            args.log,
+            date_start=date_start,
+            date_end=date_end,
+        )
         processor.output_file = args.output
 
         if args.watch:
@@ -478,18 +530,57 @@ def main():
         else:
             # One-time processing
             processor.run(only_new=False)
+    elif args.log_files is not None:
+        paths = [Path(p) for p in args.log_files]
+        if not paths:
+            print("No paths given to --log-files")
+            raise SystemExit(1)
+        api_url = _mqtt_api_url_from_config()
+        if args.watch:
+            if len(paths) > 1:
+                print(f"Watch mode: using first of {len(paths)} --log-files: {paths[0]}")
+            processor = NodeDataProcessor(
+                str(paths[0]),
+                api_url=api_url,
+                date_start=date_start,
+                date_end=date_end,
+            )
+            processor.output_file = args.output
+            print("Watching for new packet data... (Ctrl+C to stop)")
+            import time
+            processor.run(only_new=False)
+            while True:
+                try:
+                    current_size = processor.log_file.stat().st_size if processor.log_file.exists() else 0
+                    if current_size > 0:
+                        processor.run(only_new=True)
+                    time.sleep(5)
+                except KeyboardInterrupt:
+                    print("\nStopping watcher...")
+                    break
+        else:
+            for path in paths:
+                proc = NodeDataProcessor(
+                    str(path),
+                    api_url=api_url,
+                    date_start=date_start,
+                    date_end=date_end,
+                )
+                proc.output_file = args.output if len(paths) == 1 else f"nodes_{path.stem}.json"
+                proc.run(only_new=False)
     else:
-        # Multi-region mode: process all region logs
-        config = configparser.ConfigParser()
-        api_url = None
-        try:
-            config.read('config.ini')
-            if config.has_option('meshcore', 'mqtt_api'):
-                api_url = config.get('meshcore', 'mqtt_api')
-        except Exception:
-            pass
+        api_url = _mqtt_api_url_from_config()
 
-        process_all_regions(api_url=api_url, watch=args.watch, create_combined=not args.no_combined)
+        region_cli = (args.region or "").strip().lower() or None
+        process_all_regions(
+            api_url=api_url,
+            watch=args.watch,
+            create_combined=not args.no_combined,
+            log_dir=args.log_dir,
+            region_filter=region_cli,
+            date_start=date_start,
+            date_end=date_end,
+        )
 
 
 if __name__ == "__main__":

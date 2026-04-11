@@ -6,23 +6,32 @@ Message Data Processor - Watch MQTT packet logs and write per-channel JSON files
 import json
 import configparser
 import hashlib
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from meshcoredecoder import MeshCoreDecoder
+
+from mesh_log_cli import (
+    add_standard_log_args,
+    entry_in_date_range,
+    parse_cli_date_range,
+    resolve_data_log_files,
+)
 from meshcoredecoder.types.enums import PayloadType
 from meshcoredecoder.crypto import MeshCoreKeyStore
 from meshcoredecoder.types.crypto import DecryptionOptions
 
 
 class MessageDataProcessor:
-    def __init__(self, log_file=None):
+    def __init__(self, log_file=None, date_start: Optional[date] = None, date_end: Optional[date] = None):
         """Initialize the message data processor"""
         self.messages: List[Dict] = []  # legacy; not used for saving
         if log_file is None:
             log_file = "mqtt_logs/data_log.jsonl"
         self.log_file = Path(log_file)
+        self.date_start = date_start
+        self.date_end = date_end
         self.output_dir = Path("channels")
         self.processed_lines = 0
 
@@ -103,6 +112,8 @@ class MessageDataProcessor:
     def process_packet(self, entry):
         """Process a single packet entry"""
         try:
+            if not entry_in_date_range(entry.get("timestamp"), self.date_start, self.date_end):
+                return
             data = entry.get('data', {})
 
             # Skip if not a PACKET type
@@ -233,34 +244,62 @@ class MessageDataProcessor:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='Watch MQTT packet logs and write per-channel JSON files')
-    parser.add_argument('--log', default='mqtt_logs/data_log.jsonl', help='Input log file')
+    add_standard_log_args(parser)
+    parser.add_argument(
+        '--log',
+        default=None,
+        help='Single input log file (overrides --log-dir / --region / --log-files)',
+    )
     parser.add_argument('--output', default='channels', help='Output directory for per-channel JSON files')
     parser.add_argument('--watch', action='store_true', help='Watch log file for changes and continuously update channel files')
 
     args = parser.parse_args()
 
-    processor = MessageDataProcessor(args.log)
+    date_start, date_end, dr_err = parse_cli_date_range(args)
+    if dr_err:
+        print(dr_err)
+        raise SystemExit(1)
+
+    if args.log:
+        paths = [Path(args.log)]
+    else:
+        paths = resolve_data_log_files(args)
+    if not paths:
+        r = (args.region or "").strip().lower()
+        if r:
+            print(f"No data_log_{r}*.jsonl files found in {args.log_dir}")
+        else:
+            print(f"No data_log*.jsonl files found in {args.log_dir}")
+        raise SystemExit(1)
+    if (args.region or "").strip().lower():
+        print(f"Region: {(args.region or '').strip().lower()}")
+
+    processor = MessageDataProcessor(str(paths[0]), date_start=date_start, date_end=date_end)
     processor.output_dir = Path(args.output)
 
     if args.watch:
-        # Watch mode - continuously monitor the log file
+        if len(paths) > 1:
+            print(f"Watch mode: monitoring first of {len(paths)} log file(s): {paths[0]}")
         print("Watching for new GroupText messages... (Ctrl+C to stop)")
         import time
-        # Initial run
+        processor.log_file = paths[0]
         processor.run(only_new=False)
         while True:
             try:
                 current_size = processor.log_file.stat().st_size if processor.log_file.exists() else 0
                 if current_size > 0:
-                    # Process only new data
                     processor.run(only_new=True)
-                time.sleep(5)  # Check every 5 seconds
+                time.sleep(5)
             except KeyboardInterrupt:
                 print("\nStopping watcher...")
                 break
     else:
-        # One-time processing
-        processor.run(only_new=False)
+        processor.channel_messages = {}
+        for p in paths:
+            processor.log_file = p
+            processor.processed_lines = 0
+            processor.process_log_file(only_new=False)
+        processor.save_channel_files()
 
 
 if __name__ == "__main__":
