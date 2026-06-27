@@ -7,7 +7,7 @@ Requires=mqttwatcher.service
 Type=simple
 User=YOUR_USERNAME
 WorkingDirectory=/path/to/MeshMQTT
-ExecStart=/path/to/MeshMQTT/venv/bin/python /path/to/MeshMQTT/meshnodes.py --watch --log mqtt_logs/data_log.jsonl --output nodes.json
+ExecStart=/path/to/MeshMQTT/venv/bin/python /path/to/MeshMQTT/meshnodes.py --watch --no-combined
 Restart=always
 RestartSec=10
 
